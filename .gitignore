@@ -1,0 +1,12 @@
+node_modules
+**/lib/
+commands/**/node_modules
+core/**/node_modules
+models/**/node_modules
+utils/**/node_modules
+lerna-debug.log
+
+.DS_Store
+**/.DS_Store
+
+.pnpm-debug.log

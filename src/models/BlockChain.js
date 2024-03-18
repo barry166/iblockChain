@@ -28,6 +28,7 @@ class BlockChain {
 
   bindP2P() {
     this.udp.on("message", (message, rinfo) => {
+      // rinfo：远程节点数据
       const { type, data } = JSON.parse(message);
       if (type) {
         this.dispatch({ type, data }, rinfo);
@@ -45,17 +46,57 @@ class BlockChain {
 
   bindEvent() {
     this.rl.on("line", (input) => {
-      if (input.startsWith("send ")) {
-        const message = input.split(" ").slice(1).join(" ");
-        this.boardcast({ type: "chat", data: JSON.stringify(message) });
-      } else if (input.startsWith("peers")) {
-        console.log(this.peers);
-      } else {
-        console.log("未知命令");
+      const command = input.split(" ")[0];
+      switch (command) {
+        case "send":
+          const message = input.split(" ").slice(1).join(" ");
+          this.boardcast({ type: "chat", data: JSON.stringify(message) });
+          break;
+        case "peers":
+          console.log(this.peers);
+          break;
+        case "blockchain":
+          console.log(this.blockChain);
+          break;
+        case "peers":
+          console.log(this.peers);
+          break;
+        case "mine":
+          this.mine();
+          break;
+        case "verifyChain":
+          this.validateChain();
+          break;
+        default:
+          console.log("未知命令");
       }
+      // if (input.startsWith("send ")) {
+      //   const message = input.split(" ").slice(1).join(" ");
+      //   this.boardcast({ type: "chat", data: JSON.stringify(message) });
+      // } else if (input.startsWith("peers")) {
+      //   console.log(this.peers);
+      // } else if (input.startsWith("blockchain")) {
+      //   console.log(this.blockChain);
+      // } else {
+      //   console.log("未知命令");
+      // }
     });
     process.on("exit", () => {
       console.log("退出进程");
+    });
+  }
+
+  send(message, port, host) {
+    this.udp.send(JSON.stringify(message), port, host, (err) => {
+      if (err) {
+        console.log(`发送消息到 ${host}:${port} 失败：`, err);
+      }
+    });
+  }
+
+  boardcast(message) {
+    this.peers.forEach((peer) => {
+      this.send(message, peer.port, peer.address);
     });
   }
 
@@ -77,8 +118,11 @@ class BlockChain {
   dispatch(action, rinfo) {
     switch (action.type) {
       case "newpeer":
+        // 种子节点中转处理所有节点的连接请求
         console.log(`连接到新节点 ${rinfo.address}:${rinfo.port}`);
+        // 告诉除了当前节点其他节点有新朋友来了
         this.boardcast({ type: "sayhi", data: rinfo });
+        // 告诉远程节点同步peerlist和blockchain
         this.send(
           {
             type: "peerlist",
@@ -89,7 +133,17 @@ class BlockChain {
           rinfo.port,
           rinfo.address
         );
-        console.log("rinfo", rinfo);
+        this.send(
+          {
+            type: "blockchain",
+            data: JSON.stringify({
+              blockchain: this.blockChain,
+              trans: this.data,
+            }),
+          },
+          rinfo.port,
+          rinfo.address
+        );
         this.peers.push(rinfo);
         break;
 
@@ -107,10 +161,23 @@ class BlockChain {
         this.send({ type: "hi" }, data.port, data.address);
         break;
 
+      case "blockchain":
+        // 本地获取到最新的区块链
+        let allData = JSON.parse(action.data);
+        let newChain = allData.blockchain;
+        // let newTrans = allData.trans;
+
+        console.log("[信息]: 更新本地区块链");
+        // this.replaceTrans(newTrans);
+        if (newChain.length > 1) {
+          // 只有创始区块 不需要更新
+          this.replaceChain(JSON.parse(action.data).blockchain);
+        }
+        break;
+
       case "peerlist":
         // 本地获取到 所有节点，hi一下新朋友
         const newPeers = action.data.peers;
-        console.log("newPeers", newPeers, "this.peers", this.peers);
         this.addPeers(newPeers);
         this.boardcast({ type: "hi" });
         break;
@@ -124,21 +191,6 @@ class BlockChain {
       default:
         console.log("未知action", action);
     }
-  }
-
-  send(message, port, host) {
-    console.log(message, port, host);
-    this.udp.send(JSON.stringify(message), port, host, (err) => {
-      if (err) {
-        console.log(`发送消息到 ${host}:${port} 失败：`, err);
-      }
-    });
-  }
-
-  boardcast(message) {
-    this.peers.forEach((peer) => {
-      this.send(message, peer.port, peer.address);
-    });
   }
 
   addPeers(newPeers) {
@@ -278,22 +330,33 @@ class BlockChain {
   }
 
   // 校验链
-  validateChain() {
-    if (
-      JSON.stringify(this.blockChain[0]) !==
-      JSON.stringify(BlockChain.initialBlock)
-    ) {
+  validateChain(chain = this.blockChain) {
+    if (JSON.stringify(chain[0]) !== JSON.stringify(BlockChain.initialBlock)) {
       console.log("创世区块不合法");
       return false;
     }
-    for (let i = 1; i < this.blockChain.length; i++) {
-      const currentBlock = this.blockChain[i];
-      const previousBlock = this.blockChain[i - 1];
+    for (let i = 1; i < chain.length; i++) {
+      const currentBlock = chain[i];
+      const previousBlock = chain[i - 1];
       if (!this.validateBlock(currentBlock, previousBlock)) {
         return false;
       }
     }
     return true;
+  }
+
+  replaceChain(newChain) {
+    if (newChain.length === 1) {
+      return;
+    }
+    if (
+      this.validateChain(newChain) &&
+      newChain.length > this.blockchain.length
+    ) {
+      this.blockchain = JSON.parse(JSON.stringify(newChain));
+    } else {
+      console.log(`[错误]: 区块链数据不合法`);
+    }
   }
 
   static get initialBlock() {
