@@ -103,7 +103,7 @@ class BlockChain {
   startNode(port) {
     this.udp.bind(port || 0);
     if (port !== defaultPort) {
-      // 通知其他节点，连接到新节点
+      // 告诉种子节点，由种子节点处理中转事务
       this.send(
         {
           type: "newpeer",
@@ -118,7 +118,7 @@ class BlockChain {
   dispatch(action, rinfo) {
     switch (action.type) {
       case "newpeer":
-        // 种子节点中转处理所有节点的连接请求
+        // 通过种子节点中转处理所有节点的连接请求
         console.log(`连接到新节点 ${rinfo.address}:${rinfo.port}`);
         // 告诉除了当前节点其他节点有新朋友来了
         this.boardcast({ type: "sayhi", data: rinfo });
@@ -144,6 +144,7 @@ class BlockChain {
           rinfo.port,
           rinfo.address
         );
+
         this.peers.push(rinfo);
         break;
 
@@ -167,11 +168,11 @@ class BlockChain {
         let newChain = allData.blockchain;
         // let newTrans = allData.trans;
 
-        console.log("[信息]: 更新本地区块链");
+        console.log("[信息]: 更新本地区块链", newChain);
         // this.replaceTrans(newTrans);
         if (newChain.length > 1) {
           // 只有创始区块 不需要更新
-          this.replaceChain(JSON.parse(action.data).blockchain);
+          this.replaceChain(newChain);
         }
         break;
 
@@ -213,14 +214,16 @@ class BlockChain {
       console.log("有不合法的交易");
       return;
     }
+    // 交易数据需要在前面，这样才会打包校验hash
+    this.transfer("0", address, 100);
 
     const startTime = new Date().getTime();
     const newBlock = this.createBlock();
+    console.log("newBlock", newBlock);
     if (!this.validateBlock(newBlock)) {
       console.log("不合法的区块或链");
       return false;
     }
-    this.transfer("0", address, 100);
     this.blockChain.push(newBlock);
     this.data = [];
     const endTime = new Date().getTime();
@@ -257,7 +260,7 @@ class BlockChain {
   computeHash(index, previousHash, timestamp, data, nonce) {
     return crypto
       .createHash("sha256")
-      .update(index + previousHash + timestamp + data + nonce)
+      .update(index + previousHash + timestamp + JSON.stringify(data) + nonce)
       .digest("hex");
   }
 
@@ -317,6 +320,13 @@ class BlockChain {
       console.log(`第${block.index}块区块哈希指向不正确`);
       return false;
     } else if (block.hash !== this.computeBlockHash(block)) {
+      console.log(
+        "block.hash",
+        block.hash,
+        block,
+        "computeBlockHash",
+        this.computeBlockHash(block)
+      );
       // 校验区块哈希计算是否正确
       console.log(`第${block.index}块区块哈希整体计算不正确`);
       return false;
@@ -351,7 +361,7 @@ class BlockChain {
     }
     if (
       this.validateChain(newChain) &&
-      newChain.length > this.blockchain.length
+      newChain.length > this.blockChain.length
     ) {
       this.blockchain = JSON.parse(JSON.stringify(newChain));
     } else {
