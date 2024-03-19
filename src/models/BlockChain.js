@@ -64,22 +64,19 @@ class BlockChain {
         case "mine":
           this.mine();
           break;
+        case "trans":
+          const args = input.split(" ");
+          this.transfer(...args);
+          break;
+        case "pending":
+          console.log(this.data);
+          break;
         case "verifyChain":
           this.validateChain();
           break;
         default:
           console.log("未知命令");
       }
-      // if (input.startsWith("send ")) {
-      //   const message = input.split(" ").slice(1).join(" ");
-      //   this.boardcast({ type: "chat", data: JSON.stringify(message) });
-      // } else if (input.startsWith("peers")) {
-      //   console.log(this.peers);
-      // } else if (input.startsWith("blockchain")) {
-      //   console.log(this.blockChain);
-      // } else {
-      //   console.log("未知命令");
-      // }
     });
     process.on("exit", () => {
       console.log("退出进程");
@@ -147,7 +144,6 @@ class BlockChain {
 
         this.peers.push(rinfo);
         break;
-
       case "sayhi":
         // 给别人一个hi
         let data = action.data;
@@ -161,30 +157,57 @@ class BlockChain {
 
         this.send({ type: "hi" }, data.port, data.address);
         break;
-
       case "blockchain":
         // 本地获取到最新的区块链
         let allData = JSON.parse(action.data);
         let newChain = allData.blockchain;
-        // let newTrans = allData.trans;
+        let newTrans = allData.trans;
 
         console.log("[信息]: 更新本地区块链", newChain);
-        // this.replaceTrans(newTrans);
+        this.replaceTrans(newTrans);
         if (newChain.length > 1) {
           // 只有创始区块 不需要更新
           this.replaceChain(newChain);
         }
         break;
-
       case "peerlist":
         // 本地获取到 所有节点，hi一下新朋友
         const newPeers = action.data.peers;
         this.addPeers(newPeers);
         this.boardcast({ type: "hi" });
         break;
-
       case "hi":
         // hi没有意义，udp打洞给网件加白名单用的
+        break;
+      case "mine":
+        console.log(`有人挖矿成功了🎆`);
+        // 验证区块是否合法
+        const newBlock = action.data;
+        const lastBlock = this.blockChain[this.blockChain.length - 1];
+        if (lastBlock.hash === newBlock.hash) {
+          return;
+        }
+        const isValid = this.validateBlock(
+          newBlock,
+          this.blockChain[this.blockChain.length - 1]
+        );
+        if (isValid) {
+          this.blockChain.push(newBlock);
+          this.data = [];
+          console.log("更新挖矿后的区块链");
+          this.boardcast({ type: "mine", data: action.data });
+        } else {
+          console.log("挖矿的区块不合法");
+        }
+        break;
+      case "trans":
+        // 网络上的交易请求 传给本地区块链
+        if (!this.data.find((v) => isEqualObj(v, action.data))) {
+          console.log("[信息]: 交易合法 新增一下", action.data);
+
+          this.addTrans(action.data);
+          this.boardcast({ type: "trans", data: action.data });
+        }
         break;
       case "chat":
         console.log(`==> ${action.data}`);
@@ -200,6 +223,12 @@ class BlockChain {
         this.peers.push(peer);
       }
     });
+  }
+
+  addTrans(trans) {
+    if (this.isValidTransfer(trans)) {
+      this.data.push(trans);
+    }
   }
 
   // 挖矿
@@ -230,16 +259,22 @@ class BlockChain {
     console.log(
       `挖矿成功，耗时${endTime - startTime}ms，算了${newBlock.nonce}次，进账100`
     );
+    this.boardcast({ type: "mine", data: newBlock });
     return newBlock;
   }
 
   // 转账
   transfer(from, to, amount) {
-    const trans = { from, to, amount };
+    console.log(from, to, amount);
+    const timestamp = new Date().getTime();
+    const trans = { from, to, amount, timestamp };
     const signTrans = { ...trans, trans, sign: sign(trans) };
-    if (from !== "0" && this.balance(from) < amount) {
-      console.log("余额不足");
-      return false;
+    if (from !== "0") {
+      if (this.balance(from) < amount) {
+        console.log("余额不足");
+        return false;
+      }
+      this.boardcast({ type: "trans", data: signTrans });
     }
     this.data.push(signTrans);
     return signTrans;
@@ -353,6 +388,16 @@ class BlockChain {
       }
     }
     return true;
+  }
+
+  isValidTrans(trans) {
+    return trans.every((v) => this.isValidTransfer(v));
+  }
+
+  replaceTrans(trans) {
+    if (this.isValidTrans(trans)) {
+      this.data = trans;
+    }
   }
 
   replaceChain(newChain) {
